@@ -15,7 +15,6 @@ import os
 import re
 import sys
 from collections import defaultdict
-from typing import Dict, List, Set, Tuple
 from urllib.parse import urlparse
 
 from codeowners import CodeOwners, OwnerTuple
@@ -60,7 +59,7 @@ def _get_codeowners(repo: Repository, pull_base: str) -> CodeOwners:
 # returns the list of still requested reviewers
 def _get_pull_requested_reviews(
     pull: PullRequest,
-) -> Tuple[List[NamedUser], List[Team]]:
+) -> tuple[list[NamedUser], list[Team]]:
     """Returns the list of still requested reviewers"""
     requested_users, requested_teams = pull.get_review_requests()
     return list(requested_users), list(requested_teams)
@@ -68,7 +67,7 @@ def _get_pull_requested_reviews(
 
 def _get_pull_files_and_owners(
     pull: PullRequest, codeowners: CodeOwners
-) -> Dict[str, Set[OwnerTuple]]:
+) -> dict[str, set[OwnerTuple]]:
     """Returns the files edited by the given PR, along with their owners"""
     files = pull.get_files()
 
@@ -79,7 +78,7 @@ def _get_pull_files_and_owners(
     return files_and_owners
 
 
-def _get_files_owners(files_and_owners: Dict[str, Set[OwnerTuple]]) -> Set[OwnerTuple]:
+def _get_files_owners(files_and_owners: dict[str, set[OwnerTuple]]) -> set[OwnerTuple]:
     """Returns the codeowners of the given files"""
     owners = set()
     for owners_list in files_and_owners.values():
@@ -88,10 +87,10 @@ def _get_files_owners(files_and_owners: Dict[str, Set[OwnerTuple]]) -> Set[Owner
 
 
 def _get_already_reviewed(
-    all_owners: Set[OwnerTuple],
-    requested_review_user: List[NamedUser],
-    requested_review_teams: List[Team],
-) -> Set[OwnerTuple]:
+    all_owners: set[OwnerTuple],
+    requested_review_user: list[NamedUser],
+    requested_review_teams: list[Team],
+) -> set[OwnerTuple]:
     """
     Returns the owners which have already reviewed the PR.
 
@@ -113,8 +112,8 @@ def _get_already_reviewed(
 
 
 def _get_unreviewed_files(
-    files_and_owners: Dict[str, Set[OwnerTuple]], already_reviewed: Set[OwnerTuple]
-) -> Dict[str, Set[OwnerTuple]]:
+    files_and_owners: dict[str, set[OwnerTuple]], already_reviewed: set[OwnerTuple]
+) -> dict[str, set[OwnerTuple]]:
     """Returns the files which have not been reviewed yet, along with their owners"""
     unreviewed_files = {}
     for file, owners in files_and_owners.items():
@@ -136,8 +135,8 @@ def _get_unreviewed_file_owners(pull: PullRequest, codeowners: CodeOwners):
 
 
 def _get_team_files(
-    files_and_owners: Dict[str, Set[OwnerTuple]], team: str
-) -> Set[str]:
+    files_and_owners: dict[str, set[OwnerTuple]], team: str
+) -> set[str]:
     """Returns the files owned by a given team"""
     team_files = set()
     for file, owners in files_and_owners.items():
@@ -148,8 +147,8 @@ def _get_team_files(
 
 
 def _get_minimal_reviewers(
-    unreviewed_files: Dict[str, Set[OwnerTuple]],
-) -> Set[OwnerTuple]:
+    unreviewed_files: dict[str, set[OwnerTuple]],
+) -> set[OwnerTuple]:
     """
     Find the minimal set of reviewers needed to have reviews on all files.
 
@@ -164,7 +163,7 @@ def _get_minimal_reviewers(
         if len(owners) == 1:
             reviewers.update(owners)
 
-    owner_to_files: defaultdict[OwnerTuple, Set[str]] = defaultdict(set)
+    owner_to_files: defaultdict[OwnerTuple, set[str]] = defaultdict(set)
     for filename, owners in unreviewed_files.items():
         if not reviewers.isdisjoint(owners):
             # file is already covered
@@ -192,7 +191,7 @@ def _get_minimal_reviewers(
     return reviewers
 
 
-def _pr_url(url: str) -> Tuple[str, int]:
+def _pr_url(url: str) -> tuple[str, int]:
     """Returns the repo name and the PR number from a PR URL"""
     parsed = urlparse(url)
     PATH_PATTERN = "/([^/]+/[^/]+)/pull/([0-9]+)(/.*)?"
@@ -242,11 +241,11 @@ def _command_get_team_files(gh: Github, ns: argparse.Namespace):
             print(filename)
 
 
-def _users(users: str) -> List[str]:
+def _users(users: str) -> list[str]:
     return users.split(",")
 
 
-def _year_month(year_month: str) -> Tuple[int, int]:
+def _year_month(year_month: str) -> tuple[int, int]:
     vals = year_month.split("-", 1)
     try:
         year = int(vals[0])
@@ -258,14 +257,14 @@ def _year_month(year_month: str) -> Tuple[int, int]:
         raise ValueError(f"Invalid year-month format: {year_month}")
 
 
-def _next_month(year_month: Tuple[int, int]) -> Tuple[int, int]:
+def _next_month(year_month: tuple[int, int]) -> tuple[int, int]:
     year, month = year_month
     if month == 12:
         return year + 1, 1
     return year, month + 1
 
 
-def _first_day_of_month(year_month: Tuple[int, int]) -> str:
+def _first_day_of_month(year_month: tuple[int, int]) -> str:
     year, month = year_month
     return f"{year}-{month:02}-01"
 
