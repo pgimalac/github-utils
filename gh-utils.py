@@ -43,7 +43,9 @@ def _get_codeowners(repo: Repository, pull_base: str) -> CodeOwners:
             # https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners#codeowners-file-location
             # For code owners to receive review requests, the CODEOWNERS file must be on the base branch
             # of the pull request
-            ret = repo.get_contents(f"{codeowner_path}/{CODEOWNER_FILE_NAME}", pull_base)
+            ret = repo.get_contents(
+                f"{codeowner_path}/{CODEOWNER_FILE_NAME}", pull_base
+            )
             if isinstance(ret, ContentFile):
                 # return type is a list if the path is a directory
                 codeowners_raw = ret.decoded_content
@@ -56,13 +58,17 @@ def _get_codeowners(repo: Repository, pull_base: str) -> CodeOwners:
 
 
 # returns the list of still requested reviewers
-def _get_pull_requested_reviews(pull: PullRequest) -> Tuple[List[NamedUser], List[Team]]:
+def _get_pull_requested_reviews(
+    pull: PullRequest,
+) -> Tuple[List[NamedUser], List[Team]]:
     """Returns the list of still requested reviewers"""
     requested_users, requested_teams = pull.get_review_requests()
     return list(requested_users), list(requested_teams)
 
 
-def _get_pull_files_and_owners(pull: PullRequest, codeowners: CodeOwners) -> Dict[str, Set[OwnerTuple]]:
+def _get_pull_files_and_owners(
+    pull: PullRequest, codeowners: CodeOwners
+) -> Dict[str, Set[OwnerTuple]]:
     """Returns the files edited by the given PR, along with their owners"""
     files = pull.get_files()
 
@@ -82,7 +88,9 @@ def _get_files_owners(files_and_owners: Dict[str, Set[OwnerTuple]]) -> Set[Owner
 
 
 def _get_already_reviewed(
-    all_owners: Set[OwnerTuple], requested_review_user: List[NamedUser], requested_review_teams: List[Team]
+    all_owners: Set[OwnerTuple],
+    requested_review_user: List[NamedUser],
+    requested_review_teams: List[Team],
 ) -> Set[OwnerTuple]:
     """
     Returns the owners which have already reviewed the PR.
@@ -121,11 +129,15 @@ def _get_unreviewed_file_owners(pull: PullRequest, codeowners: CodeOwners):
     all_files_and_owners = _get_pull_files_and_owners(pull, codeowners)
     all_owners = _get_files_owners(all_files_and_owners)
     requested_review_user, requested_review_teams = _get_pull_requested_reviews(pull)
-    already_reviewed = _get_already_reviewed(all_owners, requested_review_user, requested_review_teams)
+    already_reviewed = _get_already_reviewed(
+        all_owners, requested_review_user, requested_review_teams
+    )
     return _get_unreviewed_files(all_files_and_owners, already_reviewed)
 
 
-def _get_team_files(files_and_owners: Dict[str, Set[OwnerTuple]], team: str) -> Set[str]:
+def _get_team_files(
+    files_and_owners: Dict[str, Set[OwnerTuple]], team: str
+) -> Set[str]:
     """Returns the files owned by a given team"""
     team_files = set()
     for file, owners in files_and_owners.items():
@@ -135,7 +147,9 @@ def _get_team_files(files_and_owners: Dict[str, Set[OwnerTuple]], team: str) -> 
     return team_files
 
 
-def _get_minimal_reviewers(unreviewed_files: Dict[str, Set[OwnerTuple]]) -> Set[OwnerTuple]:
+def _get_minimal_reviewers(
+    unreviewed_files: Dict[str, Set[OwnerTuple]],
+) -> Set[OwnerTuple]:
     """
     Find the minimal set of reviewers needed to have reviews on all files.
 
@@ -228,27 +242,145 @@ def _command_get_team_files(gh: Github, ns: argparse.Namespace):
             print(filename)
 
 
+def _users(users: str) -> List[str]:
+    return users.split(",")
+
+
+def _year_month(year_month: str) -> Tuple[int, int]:
+    vals = year_month.split("-", 1)
+    try:
+        year = int(vals[0])
+        month = int(vals[1])
+        if month < 1 or month > 12 or year < 2000 or year > 2100:
+            raise ValueError(f"Invalid month: {month}")
+        return year, month
+    except (IndexError, TypeError):
+        raise ValueError(f"Invalid year-month format: {year_month}")
+
+
+def _next_month(year_month: Tuple[int, int]) -> Tuple[int, int]:
+    year, month = year_month
+    if month == 12:
+        return year + 1, 1
+    return year, month + 1
+
+
+def _first_day_of_month(year_month: Tuple[int, int]) -> str:
+    year, month = year_month
+    return f"{year}-{month:02}-01"
+
+
+def _command_get_user_reviews(gh: Github, ns: argparse.Namespace):
+    import matplotlib.pyplot as plt
+
+    query_common = "is:pr"
+    if ns.repository:
+        query_common += f" repo:{ns.repository}"
+    if ns.organization:
+        query_common += f" org:{ns.organization}"
+
+    start = ns.from_month
+    end = ns.to_month
+
+    month = start
+    months = []
+    users = ns.user
+    counts = {user: [] for user in users}
+    while month <= end:
+        months.append(month)
+        next_month = _next_month(month)
+
+        query = query_common
+        query += f" created:>={_first_day_of_month(month)}"
+        query += f" -created:>={_first_day_of_month(next_month)}"
+
+        for user in users:
+            query_user = query + f" reviewed-by:{user}"
+            print(query_user, file=sys.stderr)
+            issues = gh.search_issues(query_user)
+            counts[user].append(issues.totalCount)
+
+        month = next_month
+
+    _, ax = plt.subplots(1)
+    for user, count in counts.items():
+        ax.plot(count, label=user, marker="o")
+    plt.xticks(range(len(months)), [f"{year}-{month:02}" for year, month in months])
+    ax.set_ylim(ymin=0)
+    plt.legend()
+    plt.show()
+
+
 def _get_arg_parser() -> argparse.ArgumentParser:
     """Build and return the argument parser"""
     parser = argparse.ArgumentParser(description="Get information from GitHub.")
 
     subparsers = parser.add_subparsers(required=True, help="pick a subcommand")
 
-    parser_pr = subparsers.add_parser("pull-request", aliases=["pr"], help="pull request related subcommands")
-    parser_pr.add_argument("-u", "--url", type=_pr_url, required=True, help="the pull request url")
+    parser_pr = subparsers.add_parser(
+        "pull-request", aliases=["pr"], help="pull request related subcommands"
+    )
+    parser_pr.add_argument(
+        "-u", "--url", type=_pr_url, required=True, help="the pull request url"
+    )
 
     subparser_pr = parser_pr.add_subparsers(required=True, help="pick a subcommand")
 
-    subparser_pr_team_files = subparser_pr.add_parser("team-files", aliases=["tf"], help="list files owned by a team")
-    subparser_pr_team_files.add_argument("-t", "--team", required=True, help="the github team name")
-    subparser_pr_team_files.add_argument("-l", "--link", action="store_true", help="display file links")
+    subparser_pr_team_files = subparser_pr.add_parser(
+        "team-files", aliases=["tf"], help="list files owned by a team"
+    )
+    subparser_pr_team_files.add_argument(
+        "-t", "--team", required=True, help="the github team name"
+    )
+    subparser_pr_team_files.add_argument(
+        "-l", "--link", action="store_true", help="display file links"
+    )
     subparser_pr_team_files.set_defaults(func=_command_get_team_files)
 
     subparser_pr_reviewers = subparser_pr.add_parser(
         "reviewers", aliases=["r"], help="list codeowners owning unreviewed files"
     )
     subparser_pr_reviewers.set_defaults(func=_command_get_needed_reviewers)
-    subparser_pr_reviewers.add_argument("-m", "--minimal", action="store_true", help="display minimal reviewers")
+    subparser_pr_reviewers.add_argument(
+        "-m", "--minimal", action="store_true", help="display minimal reviewers"
+    )
+
+    parser_user = subparsers.add_parser(
+        "user", aliases=["u"], help="user related subcommands"
+    )
+    parser_user.add_argument(
+        "-u", "--user", type=_users, required=True, help="comma-separated user handles"
+    )
+
+    subparser_user = parser_user.add_subparsers(required=True, help="pick a subcommand")
+
+    subparser_user_reviews = subparser_user.add_parser(
+        "reviews", aliases=["r"], help="plot count of PRs reviewed by users"
+    )
+    subparser_user_reviews.add_argument(
+        "-f",
+        "--from-month",
+        type=_year_month,
+        required=True,
+        help="the starting year and month, separated by an hyphen",
+    )
+    subparser_user_reviews.add_argument(
+        "-t",
+        "--to-month",
+        type=_year_month,
+        required=True,
+        help="the ending year and month, separated by an hyphen",
+    )
+    subparser_user_reviews.add_argument(
+        "-r",
+        "--repository",
+        type=str,
+        help="the repository name to filter",
+    )
+    subparser_user_reviews.add_argument(
+        "-o", "--organization", type=str, help="the organization name to filter"
+    )
+    subparser_user_reviews.set_defaults(func=_command_get_user_reviews)
 
     return parser
 
