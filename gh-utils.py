@@ -11,6 +11,7 @@
 
 
 import argparse
+import itertools
 import os
 import re
 import sys
@@ -269,45 +270,73 @@ def _first_day_of_month(year_month: tuple[int, int]) -> str:
     return f"{year}-{month:02}-01"
 
 
-def _command_get_user_reviews(gh: Github, ns: argparse.Namespace):
+def _plot_issues_count(
+    months: list[str], values: list[tuple[str | None, list[int]]], title: str | None
+):
     import matplotlib.pyplot as plt
 
-    query_common = "is:pr"
-    if ns.repository:
-        query_common += f" repo:{ns.repository}"
-    if ns.organization:
-        query_common += f" org:{ns.organization}"
+    _, ax = plt.subplots(1)
+    for label, count in values:
+        if label:
+            ax.plot(count, "o-", label=label)
+        elif len(values) == 1:
+            ax.plot(count, "o-")
+        else:
+            ax.plot(count, "ko", linestyle="")
+    plt.xticks(range(len(months)), [f"{year}-{month:02}" for year, month in months])
+    ax.set_ylim(ymin=0)
+    if title:
+        plt.title(title)
+    plt.legend()
+    plt.show()
 
+
+def _command_plot_issues_count(gh: Github, ns: argparse.Namespace):
+    query_common: str = ns.query
     start = ns.from_month
     end = ns.to_month
+    date_qualifier = ns.date_qualifier
+
+    raw_users = list(itertools.chain.from_iterable(ns.users))
+    if "{user}" in query_common:
+        if not raw_users:
+            raise ValueError(
+                "Users must be specified when '{user}' is present in the query"
+            )
+    elif raw_users:
+        raise ValueError("The query must contain '{user}' when users are specified")
 
     month = start
     months = []
-    users = ns.user
+    users = raw_users or [None]
     counts = {user: [] for user in users}
     while month <= end:
         months.append(month)
         next_month = _next_month(month)
 
         query = query_common
-        query += f" created:>={_first_day_of_month(month)}"
-        query += f" -created:>={_first_day_of_month(next_month)}"
+        query += f" {date_qualifier}:>={_first_day_of_month(month)}"
+        query += f" -{date_qualifier}:>={_first_day_of_month(next_month)}"
 
         for user in users:
-            query_user = query + f" reviewed-by:{user}"
+            query_user = query
+            if user:
+                query_user = query_user.replace("{user}", user)
+
             print(query_user, file=sys.stderr)
             issues = gh.search_issues(query_user)
             counts[user].append(issues.totalCount)
 
         month = next_month
 
-    _, ax = plt.subplots(1)
+    values: list[tuple[str | None, list[int]]] = []
     for user, count in counts.items():
-        ax.plot(count, label=user, marker="o")
-    plt.xticks(range(len(months)), [f"{year}-{month:02}" for year, month in months])
-    ax.set_ylim(ymin=0)
-    plt.legend()
-    plt.show()
+        if not ns.anonymize or user == users[0]:
+            values.append((user, count))
+        else:
+            values.append((None, count))
+
+    _plot_issues_count(months, values, ns.title)
 
 
 def _get_arg_parser() -> argparse.ArgumentParser:
@@ -344,42 +373,62 @@ def _get_arg_parser() -> argparse.ArgumentParser:
         "-m", "--minimal", action="store_true", help="display minimal reviewers"
     )
 
-    parser_user = subparsers.add_parser(
-        "user", aliases=["u"], help="user related subcommands"
-    )
-    parser_user.add_argument(
-        "-u", "--user", type=_users, required=True, help="comma-separated user handles"
+    parser_issues = subparsers.add_parser(
+        "issues", aliases=["i"], help="issues related subcommands"
     )
 
-    subparser_user = parser_user.add_subparsers(required=True, help="pick a subcommand")
-
-    subparser_user_reviews = subparser_user.add_parser(
-        "reviews", aliases=["r"], help="plot count of PRs reviewed by users"
+    subparser_issues = parser_issues.add_subparsers(
+        required=True, help="pick a subcommand"
     )
-    subparser_user_reviews.add_argument(
+
+    subparser_issues_plot = subparser_issues.add_parser(
+        "plot-count", aliases=["pc"], help="plot count of selected issues over months"
+    )
+    subparser_issues_plot.add_argument(
+        "-q", "--query", type=str, required=True, help="the query to filter issues"
+    )
+    subparser_issues_plot.add_argument(
         "-f",
         "--from-month",
         type=_year_month,
         required=True,
         help="the starting year and month, separated by an hyphen",
     )
-    subparser_user_reviews.add_argument(
+    subparser_issues_plot.add_argument(
         "-t",
         "--to-month",
         type=_year_month,
         required=True,
         help="the ending year and month, separated by an hyphen",
     )
-    subparser_user_reviews.add_argument(
-        "-r",
-        "--repository",
+    subparser_issues_plot.add_argument(
+        "-u",
+        "--user",
         type=str,
-        help="the repository name to filter",
+        dest="users",
+        action="append",
+        nargs="*",
+        help="comma-separated user handles: the plot will be split by user, with occurences of '{user}' in the query being replaced",
     )
-    subparser_user_reviews.add_argument(
-        "-o", "--organization", type=str, help="the organization name to filter"
+    subparser_issues_plot.add_argument(
+        "-d",
+        "--date-qualifier",
+        type=str,
+        default="created",
+        help="the qualifier to use for the date filter, defaults to 'created'",
     )
-    subparser_user_reviews.set_defaults(func=_command_get_user_reviews)
+    subparser_issues_plot.add_argument(
+        "-a",
+        "--anonymize",
+        action="store_true",
+        help="anonymize user names, except the first",
+    )
+    subparser_issues_plot.add_argument(
+        "--title",
+        type=str,
+        help="plot title",
+    )
+    subparser_issues_plot.set_defaults(func=_command_plot_issues_count)
 
     return parser
 
